@@ -1,0 +1,168 @@
+Description: Nimble based low-latency streaming server with SRT ingress and SLDP egress
+
+Parameters:
+  
+  InstanceType:
+    Description: Instance type of the server
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.nano, t3.micro, t3.small, t3.medium, t3.large, t3.xlarge, t3.2xlarge]
+  
+Mappings: 
+  AmiByRegion: 
+    ap-east-1: 
+      "ami": "ami-d26218a3"
+    ap-northeast-1: 
+      "ami": "ami-0d5db3e2a1b98ca94"
+    ap-south-1: 
+      "ami": "ami-0237472cf337d9529"
+    ap-southeast-1: 
+      "ami": "ami-0c199cae95cea87f0"
+    ca-central-1: 
+      "ami": "ami-0dbe45195223e250b"
+    eu-central-1: 
+      "ami": "ami-040a1551f9c9d11ad"
+    eu-north-1: 
+      "ami": "ami-0567220a328fe4fee"
+    eu-west-1: 
+      "ami": "ami-0e41581acd7dedd99"
+    me-south-1: 
+      "ami": "ami-0a7794ed517908686"
+    sa-east-1: 
+      "ami": "ami-0065a65613972a22a"
+    us-east-1: 
+      "ami": "ami-0d5ae5525eb033d0a"
+    us-west-1: 
+      "ami": "ami-00a3e4424e9ab3e56"
+    cn-north-1: 
+      "ami": "ami-01993b4213b4bffb5"
+    cn-northwest-1: 
+      "ami": "ami-01d4e30d4d4952d0f"
+    us-gov-west-1: 
+      "ami": "ami-a76736c6"
+    us-gov-east-1: 
+      "ami": "ami-64a84b15"
+    ap-northeast-2: 
+      "ami": "ami-0f4362c71ffaf7759"
+    ap-southeast-2: 
+      "ami": "ami-0c0483bc96aef8b2f"
+    eu-west-2: 
+      "ami": "ami-00f94dc949fea2adf"
+    us-east-2: 
+      "ami": "ami-0a7f2b5b6b87eaa1b"
+    us-west-2: 
+      "ami": "ami-09c6723c6c24250c9"
+    ap-northeast-3: 
+      "ami": "ami-07672d9af3947230d"
+    eu-west-3: 
+      "ami": "ami-0df03c7641cf41947"  
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.129.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+      - Key: Name
+        Value:  !Join ['', [!Ref "AWS::StackName", "-VPC" ]]
+   
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.129.10.0/24
+      MapPublicIpOnLaunch : true
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-Public
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value:  !Sub ${AWS::StackName}-Public
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows ssh, rtmp and http/s connections to host
+      VpcId:
+        Ref: VPC
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: udp
+        FromPort: 8765
+        ToPort: 8765
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 8081
+        ToPort: 8081
+        CidrIp: 0.0.0.0/0
+
+  Server:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [AmiByRegion, !Ref "AWS::Region", "ami"]
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref PublicSubnet
+      KeyName: wpstream
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -x
+          bash -c 'echo -e "deb http://nimblestreamer.com/ubuntu bionic/">> /etc/apt/sources.list'
+          wget -q -O - http://nimblestreamer.com/gpg.key | sudo apt-key add -
+          apt-get -y update
+          apt-get -y install nimble
+          apt-get -y install nimble-srt
+
+          echo "{\"SyncResponse\":{\"status\":\"success\",\"StreamCheckerMode\":false,\"UniqueVisitors\":false,\"RoutesHash\":\"\",\"Routes\":[],\"IpRanges\":[],\"ServerAuthorizationProperties\":{\"ServerAuthPropertiesHash\":\"\"},\"CamerasHash\":\"1608042158860\",\"Cameras\":[{\"id\":\"5fd8c6ae45475e108577ed58\",\"ip\":\"0.0.0.0\",\"port\":8765,\"protocol\":\"srt\",\"receive_mode\":\"listen\"}],\"StreamsHash\":\"1608042158871\",\"Streams\":[{\"id\":\"5fd8c6ae45475e108577ed5a\",\"video\":{\"cam\":\"5fd8c6ae45475e108577ed58\",\"pid\":0},\"audio\":{\"cam\":\"5fd8c6ae45475e108577ed58\",\"pid\":0},\"app\":\"live\",\"stream\":\"stream1\"}],\"RtmpSettings\":{\"hash\":\"1608042990236\",\"interfaces\":[],\"login\":\"\",\"password\":\"\",\"duration\":6,\"chunk_count\":4,\"dash_template\":\"TIME\",\"protocols\":[\"SLDP\"],\"apps\":[{\"app\":\"live\",\"login\":\"\",\"password\":\"\",\"duration\":6,\"chunk_count\":4,\"dash_template\":\"TIME\",\"protocols\":[\"RTMP\",\"SLDP\"]}],\"abr\":[]},\"RtspSettings\":{\"hash\":\"\",\"interfaces\":[]},\"IcecastSettings\":{\"hash\":\"\",\"interfaces\":[]},\"LivePullSettings\":{\"hash\":\"\",\"streams\":[]},\"RtmpPublishSettings\":{\"hash\":\"\",\"settings\":[]},\"RtspPublishSettings\":{\"hash\":\"\",\"settings\":[]},\"ManagedTasks\": {\"hash\":\"0\", \"tasks\": []},\"HlsDRMSettings\": {\"hash\":\"0\", \"url\":\"\", \"key\":\"\", \"KeyServerSettings\": {}},\"HttpOriginApps\":{\"hash\":\"0\",\"apps\":[]},\"Aliases\":{\"hash\":\"0\",\"settings\":[]},\"DataSlicesInfo\":{\"hash\":\"1\",\"data_slices\":[{\"id\":\"61289\",\"tz\":0}]},\"UDPSenderSettings\":{\"hash\":\"0\",\"settings\":[]},\"PayPerPublishSettings\":{\"hash\":\"0\",\"url\":\"\",\"auth_group_interval\":500,\"apps\":[]},\"DvrSettings\":{\"hash\":\"0\",\"settings\":[]},\"UserAgentGroupSettings\":{\"hash\":\"0\",\"settings\":[]},\"RefererGroupSettings\":{\"hash\":\"0\",\"settings\":[]},\"VideoEncodersInfo\":{\"hash\":\"0\",\"encoders\":[]},\"AudioEncodersInfo\":{\"hash\":\"0\",\"encoders\":[]},\"StreamOverrideSettings\":{\"hash\":\"0\",\"settings\":[]},\"IcecastStreamSettings\": {\"hash\":\"0\",\"settings\": []},\"AuthHandlerSettings\":{\"hash\":\"\"},\"ServerSettings\":{\"MaxCacheSize\":64,\"MaxFileCacheSize\":4096,\"LogMode\":\"info\"}}}" >> /etc/nimble/rules.conf
+
+          service nimble restart
+      Tags: 
+        - 
+          Key: "Name"
+          Value: !Sub "${AWS::StackName}-Server"
+
+Outputs:
+  IngressEndpoint:
+    Description: SRT URL to publish to
+    Value: !Sub 
+      - srt://${publicIp}:8765?pkt_size=1316
+      - { publicIp: !GetAtt Server.PublicIp }
+  EgressEndpoint:
+    Description: SLDP URL for playback
+    Value: !Sub 
+      - ws://${publicIp}:8081/live/stream1
+      - { publicIp: !GetAtt Server.PublicIp }
