@@ -135,7 +135,6 @@ Resources:
       ImageId: !FindInMap [AmiByRegion, !Ref "AWS::Region", "ami"]
       InstanceType: !Ref InstanceType
       SubnetId: !Ref PublicSubnet
-      KeyName: wpstream
       SecurityGroupIds:
         - !Ref SecurityGroup
       UserData:
